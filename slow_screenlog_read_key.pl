@@ -3,9 +3,11 @@
 $| = 1;
 
 use Term::ReadKey;
+use Time::HiRes qw(time);
 
+my ($delay_ms, $delay_seconds);
+set_delay(400);
 
-$delay = 400;
 
 my $screenlog_file;
 if (defined($ARGV[0]) && -f $ARGV[0] ){
@@ -43,8 +45,9 @@ my $prev_screen_pos = 0;
 my $frame_buffer    = "";
 my $bytes_displayed = 0;
 
-
+# enable key press detection.. 
 ReadMode('cbreak');
+# run ReadMode('restore') befor exiting programm to return into functional terminal with keyboard echo..
 
 #while (read(STDIN,$buf,1000)){
 while (read(SCREENLOG,$buf,1000)){
@@ -69,15 +72,7 @@ while (read(SCREENLOG,$buf,1000)){
          $frame_buffer     = "";
          
          if ($bytes_displayed > $fast_forward_bytes){
-            #select(undef,undef,undef,0.40);
-            my $key = ReadKey($delay * 0.001); 
-            #todo: move cursor to corner and print
-            print "\x1b[s";
-            print "\x1b[40;0f";
-            print "                                                   ";
-            print "\x1b[40;0f";
-            print "$key pressed\n" if (defined($key));
-            print "\x1b[u";
+            process_key_input();
          }
       }
       $prev_screen_pos = $cur_screen_pos;
@@ -100,4 +95,114 @@ while (read(SCREENLOG,$buf,1000)){
 }
 
 print $frame_buffer;
+
+sub process_key_input {
+    my $entry_time = time();
+    my $exit_time  = $entry_time + $delay_seconds;
+
+    my $paused = 0;
+
+    while (time() < $exit_time || $paused){
+       my $key = ReadKey($delay_seconds); 
+       if (defined($key)){
+          # move cursor to display message at fixed position, clear area before writing new message
+          print "\x1b[s";
+          print "\x1b[40;0f";
+          print "                                                   ";
+          print "\x1b[40;0f";
+          print "$key pressed\n";
+          print "\x1b[u";
+
+          if ($key eq " "){
+             if ($paused){
+               $paused = 0;
+             } else {
+               $paused = 1;
+             }
+          } elsif ($key eq "q"){
+             # exit programm
+             print "\x1b[42;0f";
+             ReadMode('restore');
+             exit;
+          } elsif ($key eq "["){
+            my $special_key = ReadKey($delay_seconds); 
+            if (defined($special_key)){
+               my $msg = "";
+               if ($special_key eq "A"){  
+                 $msg = "A cursor up";
+                 go_faster();
+               } elsif ($special_key eq "B"){  
+                 $msg = "B cursor down";
+                 slow_down();
+               } elsif ($special_key eq "C"){  
+                 $msg = "C cursor forward";
+                 move_forward();
+                 last;
+               } elsif ($special_key eq "D"){  
+                 $msg = "D cursor back";
+                 move_backwards();
+               }
+      
+               # move cursor to display message at fixed position, clear area before writing new message
+               print "\x1b[s";
+               print "\x1b[41;0f";
+               print "                                                   ";
+               print "\x1b[41;0f";
+               print "special key.. $msg\n";
+               print "\x1b[u";
+            }
+          } else {
+             print "\x1b[s";
+             print "\x1b[41;0f";
+             print "                                                   ";
+             print "\x1b[41;0f";
+             print "\x1b[u";
+          }
+       }
+
+    }
+}
+
+ReadMode('restore');
+
+sub reinit_registers {
+   $buf             = "";
+   $buf_leftovers   = "";
+   $prev_screen_pos = 0;
+   $frame_buffer    = "";
+   $bytes_displayed = 0;
+}
+
+sub set_delay {
+   $delay_ms      = shift;
+   $delay_seconds = $delay_ms * 0.001;
+}
+
+sub slow_down {
+   if ($delay_ms < 800){
+      set_delay($delay_ms + 100);
+   } 
+}
+
+sub go_faster {
+   if ($delay_ms > 110){
+      set_delay($delay_ms - 100);
+   } 
+}
+
+sub move_forward {
+   $fast_forward_bytes = $bytes_displayed + 1024 * 10;
+}
+
+sub move_backwards {
+   # everything must be replayed from the beginning
+   # fast forward to previous position 
+   $fast_forward_bytes = $bytes_displayed - 1024 * 2;
+   reinit_registers();
+
+   seek(SCREENLOG, 0, 0);
+
+   # clear screen
+   print "\x1b[2J";
+}
 

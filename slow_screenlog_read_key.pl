@@ -45,6 +45,8 @@ my $prev_screen_pos = 0;
 my $frame_buffer    = "";
 my $bytes_displayed = 0;
 
+my $paused = 0;
+
 # enable key press detection.. 
 ReadMode('cbreak');
 # run ReadMode('restore') befor exiting programm to return into functional terminal with keyboard echo..
@@ -100,8 +102,6 @@ sub process_key_input {
     my $entry_time = time();
     my $exit_time  = $entry_time + $delay_seconds;
 
-    my $paused = 0;
-
     while (time() < $exit_time || $paused){
        my $key = ReadKey($delay_seconds); 
        if (defined($key)){
@@ -119,6 +119,9 @@ sub process_key_input {
              } else {
                $paused = 1;
              }
+          } elsif ($key eq "n"){
+             # load next frame (exiting this loop leads to desired effect)
+             last;
           } elsif ($key eq "q"){
              # exit programm
              print "\x1b[42;0f";
@@ -141,6 +144,7 @@ sub process_key_input {
                } elsif ($special_key eq "D"){  
                  $msg = "D cursor back";
                  move_backwards();
+                 last;
                }
       
                # move cursor to display message at fixed position, clear area before writing new message

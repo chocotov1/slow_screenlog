@@ -49,26 +49,34 @@ my $paused = 0;
 
 # enable key press detection.. 
 ReadMode('cbreak');
-# run ReadMode('restore') befor exiting programm to return into functional terminal with keyboard echo..
 
 #while (read(STDIN,$buf,1000)){
 while (read(SCREENLOG,$buf,1000)){
    $buf = $buf_leftovers . $buf; 
    #print $buf;
 
-   # todo: match vanaf begin -> doorlopend buffer verwerken -> gelezen deel verwijderen
-   #while ($buf =~ /\x1b\x5b(\d+?);(\d+)/g){
-   #while ($buf =~ /\x1b\x5b(\d+?);(\d+?)([Hf])/sg){
-   #while ($buf =~ /^(.*?)(\x1b\[(\d+?);(\d+?)([Hf]))/sg){
-   while ($buf =~ /^((.*?)(\x1b\[(\d+?);(\d+?)([Hf])))/s){
+   while ($buf =~ /^((.*?)(\x1b\[((\d+?);(\d+?))?([Hf])))/s){
       #print $1;
       $frame_buffer .= $1;
 
       my $length_match = length($1);
-      my ($row, $col, $type) = ($4, $5, $6);
-      my $cur_screen_pos = $row * 1000 + $col; 
+      my ($row, $col, $type) = ($5, $6, $7);
 
-      if ($cur_screen_pos < $prev_screen_pos){
+      my $cur_screen_pos = 0;
+      my $force_update   = 0;
+      if (defined($row)){
+         # regex matched ESC[H with row and column numbers
+         $cur_screen_pos = $row * 1000 + $col; 
+      } else {
+         # regex matched ESC[H without row and column: cursor moved to position 0;0
+         $force_update = 1;
+         $row = 0;
+         $col = 0;
+      }  
+      #print "$row -> $col -> $type\n";
+      #print "$cur_screen_pos\n";
+
+      if ($force_update || $cur_screen_pos < $prev_screen_pos){
          print $frame_buffer;
          $bytes_displayed += length($frame_buffer);
          $frame_buffer     = "";
@@ -77,26 +85,18 @@ while (read(SCREENLOG,$buf,1000)){
             process_key_input();
          }
       }
+
       $prev_screen_pos = $cur_screen_pos;
 
-      #my ($row, $col, $type) = ($2, $3, $4);
-      #print "match: $row;$col$type\n";
-      #print "match: $row;$col$type -> $length_match\n";
-      #printf("match: %d;%d%s -> %d\n", $row,$col, $type,  $length_match);
-      #printf("match: %8s -> %-3d -> %4d\n", "$row;$col$type", $length_match, length($buf));
-      # remove matches bytes beginning $buf: 
       $buf = substr($buf, $length_match);      
-
-      #select(undef,undef,undef,0.20);
-      #select(undef,undef,undef,0.01);
    }
-
-   #print "=" x 10 . "\n";
 
    $buf_leftovers = $buf;
 }
 
 print $frame_buffer;
+# ReadMode('restore') to return into functional terminal with keyboard echo..
+ReadMode('restore');
 
 sub process_key_input {
     my $entry_time = time();
@@ -166,8 +166,6 @@ sub process_key_input {
 
     }
 }
-
-ReadMode('restore');
 
 sub reinit_registers {
    $buf             = "";

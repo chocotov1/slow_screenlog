@@ -8,9 +8,8 @@ use Time::HiRes qw(time);
 my ($delay_ms, $delay_seconds);
 set_delay(400);
 
-
 my $screenlog_file;
-if (defined($ARGV[0]) && -f $ARGV[0] ){
+if (defined($ARGV[0]) && -f $ARGV[0]){
   $screenlog_file = $ARGV[0]; 
 } else {
    die "usage: $0 <filename> <skip_bytes>\n";
@@ -50,17 +49,26 @@ my $paused = 0;
 # enable key press detection.. 
 ReadMode('cbreak');
 
-#while (read(STDIN,$buf,1000)){
 while (read(SCREENLOG,$buf,1000)){
    $buf = $buf_leftovers . $buf; 
    #print $buf;
 
    while ($buf =~ /^((.*?)(\x1b\[((\d+?);(\d+?))?([Hf])))/s){
       #print $1;
-      $frame_buffer .= $1;
+
+      my $add_to_framebuffer = $1;
 
       my $length_match = length($1);
       my ($row, $col, $type) = ($5, $6, $7);
+
+      # filter out unwanted sequences from stream before adding to frame buffer:
+      # ESC[?2004h / ESC[?2004l: Turn on/off bracketed paste mode. Assumed that it caused trouble but wasn't the case in the end
+      # still here as example
+      # $add_to_framebuffer =~ s/\x1b\[\?2004[hl]//g;
+      #
+      # vt100: ESC[?1h -> "Set cursor key to application": cursor controls of this script brake when this printed
+      $add_to_framebuffer =~ s/\x1b\[\?1h//g;
+      $frame_buffer .= $add_to_framebuffer;
 
       my $cur_screen_pos = 0;
       my $force_update   = 0;
@@ -95,8 +103,14 @@ while (read(SCREENLOG,$buf,1000)){
 }
 
 print $frame_buffer;
-# ReadMode('restore') to return into functional terminal with keyboard echo..
-ReadMode('restore');
+cleanup_before_exit();
+
+sub cleanup_before_exit {
+   # ReadMode('restore') to return into functional terminal with keyboard echo..
+   ReadMode('restore');
+   print "\x1b[?25h"; # display cursor: it might have been turned off in the stream
+   print "\x1b[42;0f"; # move cursor down
+}
 
 sub process_key_input {
     my $entry_time = time();
@@ -124,8 +138,7 @@ sub process_key_input {
              last;
           } elsif ($key eq "q"){
              # exit programm
-             print "\x1b[42;0f";
-             ReadMode('restore');
+             cleanup_before_exit();
              exit;
           } elsif ($key eq "["){
             my $special_key = ReadKey($delay_seconds); 
@@ -181,7 +194,7 @@ sub set_delay {
 }
 
 sub slow_down {
-   if ($delay_ms < 800){
+   if ($delay_ms < 1000){
       set_delay($delay_ms + 100);
    } 
 }
@@ -193,13 +206,13 @@ sub go_faster {
 }
 
 sub move_forward {
-   $fast_forward_bytes = $bytes_displayed + 1024 * 10;
+   $fast_forward_bytes = $bytes_displayed + 1024 * 20;
 }
 
 sub move_backwards {
    # everything must be replayed from the beginning
    # fast forward to previous position 
-   $fast_forward_bytes = $bytes_displayed - 1024 * 2;
+   $fast_forward_bytes = $bytes_displayed - 1024 * 10;
    reinit_registers();
 
    seek(SCREENLOG, 0, 0);

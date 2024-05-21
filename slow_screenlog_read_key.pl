@@ -43,6 +43,7 @@ my $buf_leftovers   = "";
 my $prev_screen_pos = 0;
 my $frame_buffer    = "";
 my $bytes_displayed = 0;
+my $marked_position = 0;
 
 my $paused = 0;
 
@@ -119,13 +120,7 @@ sub process_key_input {
     while (time() < $exit_time || $paused){
        my $key = ReadKey($delay_seconds); 
        if (defined($key)){
-          # move cursor to display message at fixed position, clear area before writing new message
-          print "\x1b[s";
-          print "\x1b[40;0f";
-          print "                                                   ";
-          print "\x1b[40;0f";
-          print "$key pressed\n";
-          print "\x1b[u";
+          print_message(40, "$key pressed");
 
           if ($key eq " "){
              if ($paused){
@@ -133,6 +128,9 @@ sub process_key_input {
              } else {
                $paused = 1;
              }
+          } elsif ($key eq "m"){
+             $marked_position = $bytes_displayed;
+             print_message(40, "marked position $marked_position");
           } elsif ($key eq "n"){
              # load next frame (exiting this loop leads to desired effect)
              last;
@@ -140,6 +138,17 @@ sub process_key_input {
              # exit programm
              cleanup_before_exit();
              exit;
+          } elsif ($key eq "r"){
+             if ($marked_position){
+                print_message(40, "replaying...");
+                select(undef,undef,undef,0.05);
+                $fast_forward_bytes = $marked_position;
+                replay_from_beginning();
+             } else {
+                print_message(40, "replay: first mark position with m");
+             }
+
+             last;
           } elsif ($key eq "["){
             my $special_key = ReadKey($delay_seconds); 
             if (defined($special_key)){
@@ -156,24 +165,17 @@ sub process_key_input {
                  last;
                } elsif ($special_key eq "D"){  
                  $msg = "D cursor back";
-                 move_backwards();
+                 # everything must be replayed from the beginning
+                 # fast forward to previous position 
+                 $fast_forward_bytes = $bytes_displayed - 1024 * 10;
+                 replay_from_beginning();
                  last;
                }
       
-               # move cursor to display message at fixed position, clear area before writing new message
-               print "\x1b[s";
-               print "\x1b[41;0f";
-               print "                                                   ";
-               print "\x1b[41;0f";
-               print "special key.. $msg\n";
-               print "\x1b[u";
+               print_message(41, "special key.. $msg");
             }
           } else {
-             print "\x1b[s";
-             print "\x1b[41;0f";
-             print "                                                   ";
-             print "\x1b[41;0f";
-             print "\x1b[u";
+             print_message(41, "");
           }
        }
 
@@ -209,10 +211,7 @@ sub move_forward {
    $fast_forward_bytes = $bytes_displayed + 1024 * 20;
 }
 
-sub move_backwards {
-   # everything must be replayed from the beginning
-   # fast forward to previous position 
-   $fast_forward_bytes = $bytes_displayed - 1024 * 10;
+sub replay_from_beginning {
    reinit_registers();
 
    seek(SCREENLOG, 0, 0);
@@ -221,3 +220,14 @@ sub move_backwards {
    print "\x1b[2J";
 }
 
+sub print_message {
+   # move cursor to display message at fixed position, clear area before writing new message
+   my ($line, $msg) = @_;
+
+   print "\x1b[s";
+   print "\x1b[$line;0f";
+   print "                                                   ";
+   print "\x1b[$line;0f";
+   print "$msg";
+   print "\x1b[u";
+}

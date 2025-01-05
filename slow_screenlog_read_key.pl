@@ -46,65 +46,79 @@ my $bytes_displayed = 0;
 my $marked_position = 0;
 
 my $paused = 0;
+my $eof_reached = 0;
 
 # enable key press detection.. 
 ReadMode('cbreak');
 
-while (read(SCREENLOG,$buf,1000)){
-   $buf = $buf_leftovers . $buf; 
-   #print $buf;
-
-   while ($buf =~ /^((.*?)(\x1b\[((\d+?);(\d+?))?([Hf])))/s){
-      #print $1;
-
-      my $add_to_framebuffer = $1;
-
-      my $length_match = length($1);
-      my ($row, $col, $type) = ($5, $6, $7);
-
-      # filter out unwanted sequences from stream before adding to frame buffer:
-      # ESC[?2004h / ESC[?2004l: Turn on/off bracketed paste mode. Assumed that it caused trouble but wasn't the case in the end
-      # still here as example
-      # $add_to_framebuffer =~ s/\x1b\[\?2004[hl]//g;
-      #
-      # vt100: ESC[?1h -> "Set cursor key to application": cursor controls of this script brake when this printed
-      $add_to_framebuffer =~ s/\x1b\[\?1h//g;
-      $frame_buffer .= $add_to_framebuffer;
-
-      my $cur_screen_pos = 0;
-      my $force_update   = 0;
-      if (defined($row)){
-         # regex matched ESC[H with row and column numbers
-         $cur_screen_pos = $row * 1000 + $col; 
-      } else {
-         # regex matched ESC[H without row and column: cursor moved to position 0;0
-         $force_update = 1;
-         $row = 0;
-         $col = 0;
-      }  
-      #print "$row -> $col -> $type\n";
-      #print "$cur_screen_pos\n";
-
-      if ($force_update || $cur_screen_pos < $prev_screen_pos){
-         print $frame_buffer;
-         $bytes_displayed += length($frame_buffer);
-         $frame_buffer     = "";
-         
-         if ($bytes_displayed > $fast_forward_bytes){
-            process_key_input();
+while (1){
+   unless ($eof_reached){
+      while (read(SCREENLOG,$buf,1000)){
+         $buf = $buf_leftovers . $buf; 
+         #print $buf;
+      
+         while ($buf =~ /^((.*?)(\x1b\[((\d+?);(\d+?))?([Hf])))/s){
+            #print $1;
+      
+            my $add_to_framebuffer = $1;
+      
+            my $length_match = length($1);
+            my ($row, $col, $type) = ($5, $6, $7);
+      
+            # filter out unwanted sequences from stream before adding to frame buffer:
+            # ESC[?2004h / ESC[?2004l: Turn on/off bracketed paste mode. Assumed that it caused trouble but wasn't the case in the end
+            # still here as example
+            # $add_to_framebuffer =~ s/\x1b\[\?2004[hl]//g;
+            #
+            # vt100: ESC[?1h -> "Set cursor key to application": cursor controls of this script brake when this printed
+            $add_to_framebuffer =~ s/\x1b\[\?1h//g;
+            $frame_buffer .= $add_to_framebuffer;
+      
+            my $cur_screen_pos = 0;
+            my $force_update   = 0;
+            if (defined($row)){
+               # regex matched ESC[H with row and column numbers
+               $cur_screen_pos = $row * 1000 + $col; 
+            } else {
+               # regex matched ESC[H without row and column: cursor moved to position 0;0
+               $force_update = 1;
+               $row = 0;
+               $col = 0;
+            }  
+            #print "$row -> $col -> $type\n";
+            #print "$cur_screen_pos\n";
+      
+            if ($force_update || $cur_screen_pos < $prev_screen_pos){
+               print $frame_buffer;
+               $bytes_displayed += length($frame_buffer);
+               $frame_buffer     = "";
+               
+               if ($bytes_displayed > $fast_forward_bytes){
+                  process_key_input();
+               }
+            }
+      
+            $prev_screen_pos = $cur_screen_pos;
+      
+            $buf = substr($buf, $length_match);      
          }
+      
+         $buf_leftovers = $buf;
       }
+   
+      $eof_reached = 1;
 
-      $prev_screen_pos = $cur_screen_pos;
-
-      $buf = substr($buf, $length_match);      
+      # print any left over bytes of last page
+      print $frame_buffer if ($frame_buffer);
    }
 
-   $buf_leftovers = $buf;
-}
+   flash_screen();
+   print_message(40, "end of file reached");
+   $paused = 1;
 
-print $frame_buffer;
-cleanup_before_exit();
+   # process_key_input() returns when $paused is no longer set
+   process_key_input();
+}
 
 sub cleanup_before_exit {
    # ReadMode('restore') to return into functional terminal with keyboard echo..
@@ -138,6 +152,13 @@ sub process_key_input {
              # exit programm
              cleanup_before_exit();
              exit;
+          } elsif ($key eq "g"){
+             print_message(40, "replaying from beginning");
+             select(undef,undef,undef,0.5);
+             $fast_forward_bytes = 0;
+             $paused = 0;
+             replay_from_beginning();
+             last;
           } elsif ($key eq "r"){
              if ($marked_position){
                 print_message(40, "replaying...");
@@ -188,6 +209,7 @@ sub reinit_registers {
    $prev_screen_pos = 0;
    $frame_buffer    = "";
    $bytes_displayed = 0;
+   $eof_reached     = 0;
 }
 
 sub set_delay {
@@ -230,4 +252,10 @@ sub print_message {
    print "\x1b[$line;0f";
    print "$msg";
    print "\x1b[u";
+}
+
+sub flash_screen {
+   print "\x1b[?5h";
+   select(undef,undef,undef,0.1);
+   print "\x1b[?5l";
 }
